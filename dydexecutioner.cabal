@@ -70,6 +70,7 @@ executable dydexecutioner
                      , vector
                      , microlens-th
                      , mtl
+                     , text-zipper
   
   -- Directories containing source files.
   -- hs-source-dirs:      

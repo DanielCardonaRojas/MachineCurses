@@ -45,7 +45,7 @@ main = do
     let getJsonValues = map (concatValuesForKeys ["error","hostname", "vpn"])
     let datasource ss = getJsonValues <$> (searchSigmyp' ss)
     runRemoteExecutor datasource $ \state -> do 
-        --putStrLn "Selected: "
+        putStrLn "Executing script"
         --print $ getSelectedListElement state
         return ()
 
