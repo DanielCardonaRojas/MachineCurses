@@ -61,7 +61,7 @@ data WName = MachineList | SearchTextfield | CommandTextfield | ReadmeVP | SideB
 
 deriving instance Show WName
 
-data Page = PageMachines | PageInfo | PageDiagnostics | PageConfirmation deriving (Eq,Ord, Enum, Bounded)
+data Page = PageCustom | PageInfo | PageDiagnostics | PageConfirmation deriving (Eq,Ord, Enum, Bounded)
 
 data Action = OK | Cancel | Quit | RunScriptOnAll | RunScript deriving (Show, Eq, Enum)
 
@@ -81,7 +81,7 @@ makeLenses ''AppState
 instance Show Page where
     show p = 
         case p of
-          PageMachines -> "Maquinas"
+          PageCustom -> "Custom Bash"
           PageInfo -> "Info"
           PageDiagnostics -> "Diagnostico"
           PageConfirmation -> "Confirmación"
@@ -107,7 +107,7 @@ drawUI st =
     
         sideBarOptions = C.hCenter $ padding 1 1 5 0 $ vBox (intersperse (str " ") buttons)
             where 
-                allPages = [PageMachines .. (pred PageConfirmation)]
+                allPages = [PageCustom .. (pred PageConfirmation)]
                 buttons = map mkButton $ zip3 (Button <$> allPages) (show <$> allPages) ((fromString . ("button" ++) . show) <$> [1..]) 
 
 
@@ -117,7 +117,7 @@ drawUI st =
             vLimit 5 $
             viewport ReadmeVP Vertical $
             clickable ReadmeVP $
-                vBox $ (str <$> [commandString ++ " " ++ searchString, show fw , show ds, show $ getSelectedMachine st])
+                vBox $ (str <$> [commandString ++ " " ++ searchString, show fw , show ds, show $ getSelectedMachine st, aboutText])
 
         sideBar = 
             withDefAttr "sidebar" $
@@ -144,27 +144,42 @@ drawUI st =
             hBox [verticalSeparator, sideBar, verticalSeparator, page]
         in
             case st ^. currentPage of
-              PageMachines -> [sidebarWithPage $ machinePageView st]
+              PageCustom -> [sidebarWithPage $ machinePageView st]
               PageConfirmation -> [sidebarWithPage $ confirmationPage st]
+              PageInfo -> [sidebarWithPage $ infoPage st]
+              PageDiagnostics -> [sidebarWithPage $ diagnosticsPage st]
               _ -> [sidebarWithPage $ defaultPage st]
                   
 				
 
 ------------ PAGES ---------------
 
+infoPage st = withMachineSearch (str "Info widgets missing") st
+
+diagnosticsPage st = withMachineSearch (str "Diagnostics widgets missing") st
 
 defaultPage :: AppState -> Widget WName 
 defaultPage st = 
-    let st' = setDialogButtons [("OK", OK),("Cancel", Cancel), ("Quit", Quit)] (Just 0) st
-    in mkPage Nothing st' $ str "Not implemented page"
-
-confirmationPage :: AppState -> Widget WName 
-confirmationPage st =
-    let st' = setDialogButtons [("OK", OK),("Cancel", Cancel)] Nothing st
-    in mkPage Nothing st' $ str "Confirmation Page"
+    mkPage Nothing st $ str "Not implemented page"
 
 machinePageView :: AppState -> Widget WName 
 machinePageView st = 
+    let
+        commandInput =  
+            let commandinput = F.withFocusRing (st ^. focusedWidget) E.renderEditor (st ^. commandTextfield)
+            in 
+               vLimit 10 $
+               (str "Enter a shell command" <=> (clickable CommandTextfield $  padBottom (Pad 2) $ commandinput))
+
+    in
+        withMachineSearch commandInput st
+
+confirmationPage :: AppState -> Widget WName 
+confirmationPage st =
+    mkPage Nothing st $ str "Confirmation Page"
+
+withMachineSearch :: Widget WName -> AppState ->  Widget WName 
+withMachineSearch wid st = 
     let
 
         searchInput =  
@@ -172,7 +187,7 @@ machinePageView st =
              in 
                hLimit 65 $
                vLimit 5 $
-               (str "Search machines: " <+> (clickable SearchTextfield $ hLimit 30 $ padBottom (Pad 2) $ searchInput'))
+               (str "Buscar : " <+> (clickable SearchTextfield $ hLimit 30 $ padBottom (Pad 2) $ searchInput'))
 
         mList = 
             --highlightBorder MachineList $
@@ -201,10 +216,11 @@ machinePageView st =
         vBox [ C.hCenter searchInput
              , C.hCenter mList
              , str " "
-             , commandInput
+             , wid
              ]
 
------------------------------- EVENT HANDLERS ---------------------------------
+
+------------------------------ UPDATE  - EVENT HANDLERS ---------------------------------
 
 -- | appEventWithSource generate the record field appHandleEvent  :: s -> e -> EventM n (Next s) needed
 -- to generate the brick app after supplying a source for the machine list (IO [a])
@@ -214,7 +230,7 @@ appEventWithSource :: (String -> IO [String]) -> AppState -> T.BrickEvent WName 
 
 appEventWithSource source st (T.MouseDown n _ _ loc) = 
     case n of
-      Button pg ->  M.continue (st & currentPage .~ pg)
+      Button pg ->  M.continue (updateDialogButtons st & currentPage .~ pg)
       _ -> M.continue (st & focusedWidget %~ moveFocus n)
 
 appEventWithSource source st (T.MouseUp _ _ _) = M.continue $ st
@@ -246,7 +262,7 @@ appEventWithSource datasource st (T.VtyEvent e) =
             T.handleEventLensed st actionDialog D.handleDialogEvent (V.EvKey V.KLeft []) >>= M.continue
 
         V.EvKey V.KRight [] -> 
-            T.handleEventLensed st actionDialog D.handleDialogEvent (V.EvKey V.KLeft []) >>= M.continue
+            T.handleEventLensed st actionDialog D.handleDialogEvent (V.EvKey V.KRight []) >>= M.continue
 
         V.EvKey (V.KChar '\t') [] -> M.continue $ st & focusedWidget %~ F.focusNext
 
@@ -295,7 +311,7 @@ defaultState :: AppState
 defaultState = 
     AppState 
     { 
-    _currentPage = PageMachines
+    _currentPage = PageCustom
     , _machineList = L.list MachineList (Vec.fromList []) 1
     , _searchTextfield = (E.editor SearchTextfield (str . unlines) (Just 1) "")
     , _commandTextfield = (E.editor CommandTextfield (str . unlines) (Just 5) "")
@@ -412,7 +428,15 @@ mkButton (name, label, attr) =
 -- | Add top right bottom and left padding values to a widget at once
 padding t r b l w = padTop (Pad t) $ padBottom (Pad b) $ padLeft (Pad l) $ padRight (Pad r) $ w
 
-setDialogButtons l selected st = st & (actionDialog . D.dialogButtonsL) .~ l  & (actionDialog . D.dialogSelectedIndexL) .~ selected
+updateDialogButtons st = 
+    let
+        setDialogButtons' l selected = st & (actionDialog . D.dialogButtonsL) .~ l  & (actionDialog . D.dialogSelectedIndexL) .~ selected
+    in
+        case st ^. currentPage of
+            PageCustom -> setDialogButtons' [("Execute", RunScript),("Execute on all", RunScriptOnAll)] Nothing
+            PageConfirmation -> setDialogButtons' [("OK", OK),("Cancel", Cancel)] Nothing
+            PageInfo -> setDialogButtons' [("OK", OK),("Cancel", Cancel)] (Just 1)
+            _ -> setDialogButtons' [("OK", OK),("Cancel", Cancel), ("Quit", Quit)] (Just 1)
 
 mkPage :: Maybe (AppState -> String) -> AppState -> Widget WName -> Widget WName
 mkPage validation st w = 
@@ -452,6 +476,17 @@ getSelectedMachine st = snd <$> selected
     where 
         mlist = st ^. machineList
         selected = L.listSelectedElement mlist
+
+aboutText = unlines $ 
+            [ " Este programa tiene 3 modalidades de "
+            , " funcionamiento que se encuentran en este menu lateral. "
+            , " La primera opcion Custom Bash es para ejecutar un script arbitrario "
+            , " en la maquina destino."
+            , " La opcion Diagnostico deja correr algunos diagnositicos en particular los siguientes"
+            , " - Diagnosito 1"
+            , " - Diagnosito 2"
+            , " - Diagnosito 3"
+            ]
 
 dydAscii = ":::::::::  :::   ::: :::::::::  \n:+:    :+: :+:   :+: :+:    :+: \n+:+    +:+  +:+ +:+  +:+    +:+ \n+#+    +:+   +#++:   +#+    +:+ \n+#+    +#+    +#+    +#+    +#+ \n#+#    #+#    #+#    #+#    #+# \n#########     ###    #########  "
 
