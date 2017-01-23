@@ -43,25 +43,26 @@ main :: IO ()
 main = do
     putStrLn "\n Starting DyD Executioner \n"
     let getJsonValues = map (concatValuesForKeys ["error","hostname", "vpn"])
-    let datasource ss = getJsonValues <$> (searchSigmyp' ss)
+    --let datasource ss = getJsonValues <$> (searchSigmyp' ss)
+    let datasource ss = searchSigmyp' ss
     runRemoteExecutor datasource $ \state -> do 
         putStrLn "Executing script"
         --print $ getSelectedListElement state
         return ()
 
-main2 :: IO ()
-main2 = do
-    putStrLn "\n Starting DyD Executioner \n"
-    putStrLn "Enter search query for machines: "
-    searchString <- getLine
-    res <- searchSigmyp searchString
-    let getJsonValues = map (concatValuesForKeys ["hostname", "vpn"])
-    case (res :: Maybe [Map String String]) of
-        Nothing -> putStrLn "Couldn't decode data"
-        Just x -> if null x then putStrLn "No machines found" 
-                            else 
-                                renderDialog (getJsonValues x) $ \state -> do 
-                                    putStrLn "Selected: "
-                                    --print $ getSelectedListElement state
-                                    --putStrLn  $ "Final state is: " ++ show (state)
+--main2 :: IO ()
+--main2 = do
+    --putStrLn "\n Starting DyD Executioner \n"
+    --putStrLn "Enter search query for machines: "
+    --searchString <- getLine
+    --res <- searchSigmyp searchString
+    --let getJsonValues = map (concatValuesForKeys ["hostname", "vpn"])
+    --case (res :: Maybe [Map String String]) of
+        --Nothing -> putStrLn "Couldn't decode data"
+        --Just x -> if null x then putStrLn "No machines found" 
+                            --else 
+                                --renderDialog (getJsonValues x) $ \state -> do 
+                                    --putStrLn "Selected: "
+                                    ----print $ getSelectedListElement state
+                                    ----putStrLn  $ "Final state is: " ++ show (state)
 

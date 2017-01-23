@@ -11,6 +11,8 @@ import Data.Monoid
 import qualified Graphics.Vty as V
 import Data.Maybe (fromMaybe)
 import Data.List (intersperse, elemIndex)
+import qualified Data.Map as Map
+import Data.Map (Map(..))
 import Control.Monad.Trans
 
 import qualified Data.Text.Zipper as TZ
@@ -66,6 +68,7 @@ TODO:
 
 -}
 
+type Machine = Map String String -- ^ A map is a just a assocciation of keys and values
 -- | Widget name identifiers
 data WName = MachineList | SearchTextfield | CommandTextfield | ReadmeVP | SideBarOptions | Button Page | Toggles | Toggle InfoToggle | NoWidget 
     deriving (Eq, Ord)
@@ -74,14 +77,15 @@ deriving instance Show WName
 
 data Page = PageCustom | PageInfo | PageDiagnostics | PageConfirmation deriving (Eq,Ord, Enum, Bounded)
 
-data InfoToggle = InfoVPN | InfoHost deriving (Show, Enum, Bounded, Ord, Eq)
+data InfoToggle = InfoVPN | InfoHost | InfoMac | InfoOffice | InfoEntity deriving (Enum, Bounded, Ord, Eq)
 
 data Action = OK | Cancel | Quit | RunScriptOnAll | RunScript deriving (Show, Eq, Enum)
 
 
 data AppState = AppState
     { _currentPage :: Page 
-    , _machineList :: L.List WName String
+    , _machineList :: L.List WName String -- ^ This just takes a filtered and organized portion of _infoRows
+    , _infoRows :: [Machine] -- ^ info rows is the actual source where all other information is stored about machines
     , _searchTextfield :: E.Editor String WName
     , _commandTextfield :: E.Editor String WName
     , _focusedWidget :: F.FocusRing WName
@@ -90,6 +94,15 @@ data AppState = AppState
     } 
         
 makeLenses ''AppState
+
+instance Show InfoToggle where
+    show w = 
+        case w of
+            InfoVPN -> "vpn"
+            InfoHost -> "host"
+            InfoMac -> "mac"
+            InfoEntity -> "entidad"
+            InfoOffice -> "office"
 
 instance Show Page where
     show p = 
@@ -210,8 +223,10 @@ withMachineSearch wid st =
             withDefAttr "toggles" $
             vLimit 8 $
             hLimit 65 $
+            C.vCenter $
             clickable Toggles $
-            renderHorizontalList listDrawToggles (st ^. infoToggles)
+            --renderHorizontalList listDrawToggles (st ^. infoToggles)
+            hBox $ map listDrawToggles (st ^. infoToggles)
 
         mList = 
             --highlightBorder MachineList $
@@ -245,18 +260,20 @@ withMachineSearch wid st =
 -- to generate the brick app after supplying a source for the machine list (IO [a])
 
 
-appEventWithSource :: (String -> IO [String]) -> AppState -> T.BrickEvent WName e -> T.EventM WName (T.Next (AppState))
+appEventWithSource :: (String -> IO [Machine]) -> AppState -> T.BrickEvent WName e -> T.EventM WName (T.Next (AppState))
 
 appEventWithSource source st (T.MouseUp n _ loc) = 
     case n of
       Button pg ->  M.continue (updateDialogButtons st & currentPage .~ pg)
       Toggle t ->  M.continue st
+      Toggles -> M.continue st
       _ -> M.continue (st & focusedWidget %~ moveFocus n)
 
 appEventWithSource source st (T.MouseDown n _ _ loc) = 
     case n of
       Button pg ->  M.continue (updateDialogButtons st & currentPage .~ pg)
       Toggle t ->  M.continue (toggleSearchColumnAt t st )
+      Toggles -> M.continue st
       _ -> M.continue (st & focusedWidget %~ moveFocus n)
 
 appEventWithSource source st (T.MouseUp _ _ _) = M.continue $ st
@@ -277,7 +294,8 @@ appEventWithSource datasource st (T.VtyEvent e) =
             case fw of
                Just SearchTextfield -> do
                    let st' = st & focusedWidget %~ (moveFocus MachineList)
-                   M.suspendAndResume (setMachineList st' <$> datasource (head search))
+                   --M.suspendAndResume (setMachineList st' <$> datasource (head search))
+                   M.suspendAndResume $ updateMachineList <$> (flip setInfoList st' <$> datasource (head search))
                _ -> 
                     case (selectedMachine, ds) of 
                         (Just m, Just n) -> M.continue (st & currentPage .~ PageConfirmation)
@@ -313,7 +331,7 @@ appEventWithSource datasource st (T.VtyEvent e) =
 appEventWithSource source st _ = M.continue st 
 
 appEvent :: AppState -> T.BrickEvent WName e -> T.EventM WName (T.Next (AppState))
-appEvent = appEventWithSource (const $ return ([] :: [String]))
+appEvent = appEventWithSource (const $ return ([] :: [Machine]))
     
 
 ------------------------- INITIAL STATE -------------------------
@@ -339,11 +357,12 @@ defaultState =
     { 
     _currentPage = PageCustom
     , _machineList = L.list MachineList (Vec.fromList []) 1
+    , _infoRows = []
     , _searchTextfield = (E.editor SearchTextfield (str . unlines) (Just 1) "")
     , _commandTextfield = (E.editor CommandTextfield (str . unlines) (Just 5) "")
     , _focusedWidget = F.focusRing focusWidgetList
     , _pageDialog = defaultActionDialog
-    , _infoToggles = [(InfoVPN, True),(InfoHost, False)]
+    , _infoToggles = zip [minBound .. maxBound] (repeat False)
     }
 
 
@@ -408,7 +427,7 @@ renderDialog l handler = do
 
 -- | runRemoteExecutor runs an IO action that takes as parameter the search string of the edit box and returns a list to 
 -- populate the list widget
-runRemoteExecutor :: (String -> IO [String]) -> (AppState -> IO ()) -> IO ()
+runRemoteExecutor :: (String -> IO [Machine]) -> (AppState -> IO ()) -> IO ()
 runRemoteExecutor source handler = do
     let buildVty = do
           v <- V.mkVty =<< V.standardIOConfig
@@ -425,9 +444,13 @@ listDrawToggles (t,b) =
     case b of
         True -> clickable (Toggle t) $
                 (B.border (str " x ")) <+> (str $ show t)
+                --B.border $
+                --hBox $ [ (str " x ") , (str $ show t)]
 
         False -> clickable (Toggle t) $
                 (B.border (str "   ")) <+> (str $ show t)
+                --B.border $
+                --hBox $ [ (str "   ") , (str $ show t)]
 
 renderHorizontalList f = horizontalJoin . map f
     where horizontalJoin = foldr1 (<+>) . intersperse (str " ")
@@ -507,6 +530,21 @@ machinePageValidator = Just $ \st ->
 ------ UTILITIES ---------
 
 (??) = flip fromMaybe
+
+setInfoList :: [Machine] -> AppState -> AppState
+setInfoList l st = st & infoRows .~ l
+
+-- | Just looks up which toggles are own for the search and then selects which columns from the infoList to display
+-- and copies them over as a string to the machine list widget model.
+updateMachineList :: AppState -> AppState
+updateMachineList st = st & (machineList . L.listElementsL) .~ (Vec.fromList rowData)
+    where
+        joinWith c = mconcat . intersperse c
+        onToggles = map (show . fst) (filter snd (st ^. infoToggles))
+        selectRowFields = Map.elems . Map.filterWithKey (\k v -> flip elem onToggles k)
+        rowData =  map (joinWith " " . selectRowFields) (st ^. infoRows)
+
+
 
 setMachineList ::  AppState -> [String] -> AppState
 setMachineList st ls = st &  machineList .~ listMachine where listMachine = L.list MachineList (Vec.fromList  ls) 1
